@@ -138,3 +138,5 @@ Test on arm64:
 | `Test/CRDsInstalled` | Verifies NodeDiagnostic CRD exists |
 
 See `.github/workflows/ci.yaml` for the full workflow configuration.
+
+noop to test CI
