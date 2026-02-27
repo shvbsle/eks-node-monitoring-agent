@@ -69,6 +69,7 @@ func Configure() (testenv env.Environment, setupFuncs []env.Func, finishFuncs []
 		if len(nodeMonitoringAgentImage) == 0 {
 			log.Fatalf("'--image' must be provided when --install is true")
 		}
+		log.Printf("noop canary: installing agent with image: %s", nodeMonitoringAgentImage)
 		setupHook, finishHook := makeInstallAgentHooks(nodeMonitoringAgentImage)
 		setupFuncs = append(setupFuncs, setupHook)
 		finishFuncs = append(finishFuncs, finishHook)

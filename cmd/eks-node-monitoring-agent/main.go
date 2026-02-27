@@ -39,6 +39,7 @@ import (
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/neuron"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/nvidia"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/storage"
+
 	// Import monitors that require explicit registration (can't use init())
 	"github.com/aws/eks-node-monitoring-agent/monitors/runtime"
 	// Import observer packages to register observers
