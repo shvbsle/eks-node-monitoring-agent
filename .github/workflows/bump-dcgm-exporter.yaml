@@ -1,0 +1,128 @@
+name: "Bump DCGM Exporter Image"
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Once a day at 09:00 UTC
+    - cron: "0 9 * * *"
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump-dcgm-exporter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-west-2
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
+
+      - name: Check for new DCGM exporter image
+        id: check
+        run: |
+          set -euo pipefail
+
+          CURRENT_TAG=$(grep -A2 'dcgmAgent:' charts/eks-node-monitoring-agent/values.yaml | grep -A1 'image:' | grep 'tag:' | awk '{print $2}')
+          echo "current_tag=${CURRENT_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Current DCGM exporter tag: ${CURRENT_TAG}"
+
+          # List tags from the actual ECR repo used in the chart
+          ECR_REGISTRY="602401143452"
+          ECR_REPO="eks/observability/dcgm-exporter"
+          ECR_REGION="us-west-2"
+
+          ALL_TAGS=$(aws ecr describe-images \
+            --registry-id "$ECR_REGISTRY" \
+            --repository-name "$ECR_REPO" \
+            --region "$ECR_REGION" \
+            --query 'imageDetails[*].imageTags[]' \
+            --output text)
+
+          # Find the latest tag matching the pattern: X.Y.Z-A.B.C-ubuntu22.04
+          LATEST_TAG=$(echo "$ALL_TAGS" | tr '\t' '\n' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+-ubuntu22\.04$' \
+            | sort -V \
+            | tail -1)
+
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No matching tags found in ECR"
+            echo "new_version_available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Latest ECR tag: ${LATEST_TAG}"
+
+          if [ "$CURRENT_TAG" = "$LATEST_TAG" ]; then
+            echo "Already up to date"
+            echo "new_version_available=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New version available: ${LATEST_TAG}"
+            echo "new_version_available=true" >> "$GITHUB_OUTPUT"
+            echo "latest_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for existing PR
+        if: steps.check.outputs.new_version_available == 'true'
+        id: existing_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="automated/bump-dcgm-exporter-${{ steps.check.outputs.latest_tag }}"
+          EXISTING=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "PR already exists for ${BRANCH}"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update DCGM exporter tag
+        if: steps.check.outputs.new_version_available == 'true' && steps.existing_pr.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          CURRENT="${{ steps.check.outputs.current_tag }}"
+          LATEST="${{ steps.check.outputs.latest_tag }}"
+          sed -i "s|tag: ${CURRENT}|tag: ${LATEST}|" charts/eks-node-monitoring-agent/values.yaml
+
+      - name: Run make generate
+        if: steps.check.outputs.new_version_available == 'true' && steps.existing_pr.outputs.exists == 'false'
+        run: make generate
+
+      - name: Create Pull Request
+        if: steps.check.outputs.new_version_available == 'true' && steps.existing_pr.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          LATEST="${{ steps.check.outputs.latest_tag }}"
+          CURRENT="${{ steps.check.outputs.current_tag }}"
+          BRANCH="automated/bump-dcgm-exporter-${LATEST}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "Bump DCGM exporter image to ${LATEST}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "Bump DCGM exporter image from ${CURRENT} to ${LATEST}" \
+            --body "Automated PR to update the DCGM exporter base image.
+
+          - **Previous tag:** \`${CURRENT}\`
+          - **New tag:** \`${LATEST}\`
+          - **Source:** [nvidia/dcgm-exporter on Docker Hub](https://hub.docker.com/r/nvidia/dcgm-exporter/tags)
+
+          This PR was created automatically by the \`bump-dcgm-exporter\` workflow.
+          \`make generate\` has been run to update any generated artifacts." \
+            --head "$BRANCH" \
+            --label "automated"
