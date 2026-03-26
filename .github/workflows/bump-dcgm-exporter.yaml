@@ -140,5 +140,4 @@ jobs:
 
           This PR was created automatically by the \`bump-dcgm-exporter\` workflow.
           \`make generate\` has been run to update any generated artifacts." \
-            --head "$BRANCH" \
-            --label "automated"
+            --head "$BRANCH"
