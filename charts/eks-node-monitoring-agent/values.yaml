@@ -101,7 +101,7 @@ nodeAgent:
 dcgmAgent:
   image:
     # -- Image tag for the dcgm-exporter
-    tag: 4.5.2-4.8.1-ubuntu22.04
+    tag: 4.5.1-4.8.0-ubuntu22.04
     # -- Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com).
     # When set, this takes precedence over account/endpoint/region/domain fields.
     containerRegistry: ""
