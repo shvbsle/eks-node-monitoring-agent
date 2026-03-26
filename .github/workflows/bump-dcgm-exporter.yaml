@@ -35,39 +35,48 @@ jobs:
           echo "current_tag=${CURRENT_TAG}" >> "$GITHUB_OUTPUT"
           echo "Current DCGM exporter tag: ${CURRENT_TAG}"
 
-          # List tags from the actual ECR repo used in the chart
-          ECR_REGISTRY="602401143452"
-          ECR_REPO="eks/observability/dcgm-exporter"
-          ECR_REGION="us-west-2"
+          # Step 1: Get the latest tag from Docker Hub (source of truth for new releases)
+          TAGS_JSON=$(curl -sf "https://hub.docker.com/v2/repositories/nvidia/dcgm-exporter/tags/?page_size=100&ordering=last_updated")
 
-          ALL_TAGS=$(aws ecr describe-images \
-            --registry-id "$ECR_REGISTRY" \
-            --repository-name "$ECR_REPO" \
-            --region "$ECR_REGION" \
-            --query 'imageDetails[*].imageTags[]' \
-            --output text)
-
-          # Find the latest tag matching the pattern: X.Y.Z-A.B.C-ubuntu22.04
-          LATEST_TAG=$(echo "$ALL_TAGS" | tr '\t' '\n' \
+          LATEST_TAG=$(echo "$TAGS_JSON" | jq -r '.results[].name' \
             | grep -E '^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+-ubuntu22\.04$' \
             | sort -V \
             | tail -1)
 
           if [ -z "$LATEST_TAG" ]; then
-            echo "No matching tags found in ECR"
+            echo "No matching tags found on Docker Hub"
             echo "new_version_available=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "Latest ECR tag: ${LATEST_TAG}"
+          echo "Latest Docker Hub tag: ${LATEST_TAG}"
 
           if [ "$CURRENT_TAG" = "$LATEST_TAG" ]; then
             echo "Already up to date"
             echo "new_version_available=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "New version available: ${LATEST_TAG}"
+            exit 0
+          fi
+
+          # Step 2: Verify the tag is available in the ECR repo configured in the chart
+          ECR_ACCOUNT=$(yq '.dcgmAgent.image.account' charts/eks-node-monitoring-agent/values.yaml)
+          ECR_ENDPOINT=$(yq '.dcgmAgent.image.endpoint' charts/eks-node-monitoring-agent/values.yaml)
+          ECR_REGION=$(yq '.dcgmAgent.image.region' charts/eks-node-monitoring-agent/values.yaml)
+          ECR_DOMAIN=$(yq '.dcgmAgent.image.domain' charts/eks-node-monitoring-agent/values.yaml)
+          ECR_REGISTRY="${ECR_ACCOUNT}.dkr.${ECR_ENDPOINT}.${ECR_REGION}.${ECR_DOMAIN}"
+          ECR_IMAGE="${ECR_REGISTRY}/eks/observability/dcgm-exporter:${LATEST_TAG}"
+
+          echo "Checking if ${ECR_IMAGE} exists in ECR..."
+
+          aws ecr get-login-password --region "${ECR_REGION}" \
+            | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+
+          if docker manifest inspect "${ECR_IMAGE}" > /dev/null 2>&1; then
+            echo "Image verified in ECR"
             echo "new_version_available=true" >> "$GITHUB_OUTPUT"
             echo "latest_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag ${LATEST_TAG} found on Docker Hub but NOT available in ECR yet — skipping"
+            echo "new_version_available=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Check for existing PR
