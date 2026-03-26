@@ -29,9 +29,10 @@ jobs:
       - name: Check for new DCGM exporter image
         id: check
         run: |
-          # Parse current tag from values.yaml
+          # Parse current dcgmAgent image tag from values.yaml
+          # The tag sits under dcgmAgent.image.tag — grab the first 'tag:' line after 'dcgmAgent:'
           VALUES_FILE="charts/eks-node-monitoring-agent/values.yaml"
-          CURRENT_TAG=$(awk '/^dcgmAgent:/,/^[^ ]/' "$VALUES_FILE" | grep 'tag:' | head -1 | awk '{print $2}')
+          CURRENT_TAG=$(awk '/^dcgmAgent:/{found=1} found && /tag:/{print $2; exit}' "$VALUES_FILE")
           if [ -z "$CURRENT_TAG" ]; then
             echo "::error::Failed to parse current DCGM tag from ${VALUES_FILE}"
             exit 1
