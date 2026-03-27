@@ -16,6 +16,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clean up merged bot branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete remote branches from previous bot runs whose PRs are already merged or closed
+          for BRANCH in $(git branch -r | grep 'origin/automated/bump-dcgm-exporter-' | sed 's|origin/||'); do
+            OPEN=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')
+            if [ "$OPEN" = "0" ]; then
+              echo "Deleting stale branch: ${BRANCH}"
+              git push origin --delete "$BRANCH" || true
+            fi
+          done
 
       - uses: actions/setup-go@v5
         with:
